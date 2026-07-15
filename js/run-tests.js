@@ -235,6 +235,108 @@ check("unrecognized part lines -> warning quotes the line", function () {
   );
 });
 
+console.log("\nPADS Logic schematic format:");
+var LOGIC_SAMPLE = [
+  "*PADS-LOGIC-V9.0* DESIGN EXPORT FILE FROM PADS LOGIC VVX.2.15",
+  "*SHT*   5 5_RX_OUTPUT1 -1 $$$NONE",
+  "*PARTTYPE*   ITEMS",
+  "",
+  "$PWR_SYMS UND  0   0   2     0",
+  "TIMESTAMP 1999.03.30.22.52.06",
+  "PWR 7",
+  "+5V P +5V",
+  "",
+  "12110305-001 BGA  6   0   0     0",
+  "TIMESTAMP 2024.07.31.22.48.17",
+  "GATE 1 48 0",
+  "BFIC-I/O",
+  "K1 0 L RFIN_0",
+  "",
+  "*PART*       ITEMS",
+  "",
+  "PD1          XBAND-RX_COMBINER 7000  11700   0 2 80 8 80 8 3 2 3 0 0 24",
+  '"Default Font"',
+  '"Default Font"',
+  '70 240 0 0 100 10 0 "Default Font"',
+  "REF-DES",
+  '600 100 0 0 80 8 0 "Default Font"',
+  "PART-TYPE",
+  "*",
+  '"Created By" P.LOFTUS',
+  '"PCB DECAL" XBAND-RX_COMBINER',
+  "0 -20 -80 0 1",
+  "1 70 20 0 1",
+  "",
+  "U3-A         12110305-001     11900 10200   0 0 80 8 80 8 4 11 48 0 0 0",
+  '"Default Font"',
+  '"EDU Part Number" 12110305-002',
+  '"Checked By" ',
+  '"Manufacturer" Lockheed-Martin',
+  '"PCB DECAL" AWMF-0245-BGA',
+  '"SIGPINAE5" RFGND_RX',
+  "$PG1         $PWR_SYMS 100 100 0 0 80 8 80 8 3 2 3 0 0 24",
+  "*CONNECTION*",
+  "*SIGNAL* RXBFIC_IN0 0 0",
+  "PD1.3        @@@O1        3 0",
+  "7400   12000",
+  "7900   12200",
+  "U3-A.K1      @@@D461      2 0",
+  "11700  14200",
+  "@@@D482      @@@D461      2 0",
+  "10400  14200",
+  "@@@D482      X271.1       2 0",
+  "*NETNAMES*",
+  'RXBFIC_IN0   @@@O1        350    10     0 0 0      0      0 2 -1 8 80 "Default Font"',
+  "*SHT*   6 6_RX_OUTPUT2 -1 $$$NONE",
+  "*PART*       ITEMS",
+  "",
+  "U3-B         12110305-001     17900 9100    0 0 80 8 80 8 4 11 41 0 0 0",
+  '"PCB DECAL" AWMF-0245-BGA',
+  "*CONNECTION*",
+  "*SIGNAL* RXBFIC_IN0 0 0",
+  "U3-B.G1      @@@O9        2 0",
+  "*SIGNAL* $$$19966 64 0",
+  "@@@D5        @@@D6        2 0",
+].join("\n");
+
+check("logic export: parts, gate merge, attributes, decal", function () {
+  var nl = new PADS.PADSParser().parseSync(LOGIC_SAMPLE);
+  assert(nl.format === "logic", "format should be logic, got " + nl.format);
+  var names = nl.parts.map(function (p) { return p.refdes; }).join(",");
+  assert(nl.parts.length === 2, "expected 2 parts (PD1, U3 merged; $PG1 excluded), got: " + names);
+  var pd1 = nl.parts.filter(function (p) { return p.refdes === "PD1"; })[0];
+  assert(pd1.decal === "XBAND-RX_COMBINER", "PD1 decal from PCB DECAL attribute");
+  var u3 = nl.parts.filter(function (p) { return p.refdes === "U3"; })[0];
+  assert(u3, "U3-A/U3-B should merge into U3");
+  assert(u3.partType === "12110305-001", "U3 part type");
+  assert(u3.gates.join(",") === "A,B", "U3 gates A,B, got " + u3.gates.join(","));
+  assert(u3.sheets.join(",") === "5_RX_OUTPUT1,6_RX_OUTPUT2", "U3 sheets, got " + u3.sheets.join(","));
+  assert(u3.decal === "AWMF-0245-BGA", "U3 decal from attribute");
+  assert(u3.attributes["EDU Part Number"] === "12110305-002", "EDU Part Number attribute");
+  assert(u3.attributes["Manufacturer"] === "Lockheed-Martin", "Manufacturer attribute");
+});
+check("logic export: nets merged across sheets, gate-stripped pins", function () {
+  var nl = new PADS.PADSParser().parseSync(LOGIC_SAMPLE);
+  assert(nl.nets.length === 1, "one net with pins (empty $$$ net dropped), got " + nl.nets.length);
+  var net = nl.nets[0];
+  assert(net.name === "RXBFIC_IN0", "net name");
+  var pins = net.pins.map(function (p) { return p.refdes + "." + p.pin; }).sort().join(" ");
+  assert(
+    pins === "PD1.3 U3.G1 U3.K1 X271.1",
+    "pins across both sheets, gate suffix stripped, junctions/offpage excluded; got: " + pins
+  );
+});
+check("logic export: schematic table has attribute columns", function () {
+  var nl = new PADS.PADSParser().parseSync(LOGIC_SAMPLE);
+  var rows = PADS.schematicPartsTable(nl);
+  var header = rows[0].join("|");
+  assert(/^Ref Des\|Part Type\|PCB Decal\|Gates\|Sheet\(s\)/.test(header), "fixed columns first, got " + header);
+  assert(header.indexOf("EDU Part Number") >= 0, "attribute column present");
+  assert(header.indexOf("SIGPIN") < 0, "pin-level SIGPIN* attributes excluded");
+  var u3row = rows.filter(function (r) { return r[0] === "U3"; })[0];
+  assert(u3row[3] === 2 && u3row[2] === "AWMF-0245-BGA", "U3 gates=2 and decal in row");
+});
+
 console.log("\nExport helpers:");
 check("toLayoutPartsTSV shape + natural sort", function () {
   var nl = parseFile(path.join(__dirname, "examples", "layout_basic.asc"));

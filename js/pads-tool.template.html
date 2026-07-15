@@ -78,8 +78,9 @@
 <body>
 
 <h1>PADS ASCII Parser Tool</h1>
-<p class="sub">Parses PADS netlist files (<code>*PADS-PCB*</code>) and PADS Layout ASCII exports
-(<code>!PADS-POWERPCB-...</code>). Runs entirely in your browser — no install, no network, nothing leaves this page.</p>
+<p class="sub">Parses PADS netlist files (<code>*PADS-PCB*</code>), PADS Layout ASCII exports
+(<code>!PADS-POWERPCB-...</code>) and PADS Logic schematic exports (<code>*PADS-LOGIC*</code>).
+Runs entirely in your browser — no install, no network, nothing leaves this page.</p>
 
 <div class="panel">
   <div class="drop" id="drop" tabindex="0">
@@ -213,6 +214,7 @@
     $("results").classList.remove("hidden");
     var pinCount = netlist.nets.reduce(function (a, n) { return a + n.pins.length; }, 0);
     var fmtLabel = netlist.format === "layout" ? "Layout ASCII"
+      : netlist.format === "logic" ? "Logic schematic"
       : netlist.format === "netlist" ? "Netlist" : "Unknown";
     $("stats").innerHTML =
       stat("Format", fmtLabel + (netlist.units ? " · " + netlist.units : "")) +
@@ -222,7 +224,11 @@
       stat("Errors", netlist.errors.length, netlist.errors.length ? "err" : "ok") +
       stat("Warnings", netlist.warnings.length, netlist.warnings.length ? "warn" : "ok");
 
-    $("tab-parts").innerHTML = tableHTML(PADS.layoutPartsTable(netlist));
+    $("tab-parts").innerHTML = tableHTML(
+      netlist.format === "logic"
+        ? PADS.schematicPartsTable(netlist)
+        : PADS.layoutPartsTable(netlist)
+    );
     $("tab-nets").innerHTML = tableHTML(PADS.netsTable(netlist));
     $("tab-bom").innerHTML = tableHTML(PADS.bomSummaryTable(netlist));
 
@@ -315,7 +321,13 @@
   });
   $("csvParts").addEventListener("click", function () {
     if (!netlist) return;
-    download(baseName + "_parts.csv", PADS.toLayoutPartsCSV(netlist), "text/csv");
+    download(
+      baseName + "_parts.csv",
+      netlist.format === "logic"
+        ? PADS.toSchematicPartsCSV(netlist)
+        : PADS.toLayoutPartsCSV(netlist),
+      "text/csv"
+    );
   });
   $("csvNets").addEventListener("click", function () {
     if (!netlist) return;
