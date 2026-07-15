@@ -1,0 +1,28 @@
+!PADS-POWERPCB-V10.0-MILS-250L! DESIGN DATABASE ASCII FILE 1.
+*PART*       ITEMS
+
+*REMARK* REFNM PTYPENM X Y ORI GLUE MIRROR ALT CLSTID CLSTATTR BROTHERID LABELS
+*REMARK* .REUSE. INSTANCE RPART
+*REMARK* VISIBLE XLOC YLOC ORI LEVEL HEIGTH WIDTH MIRRORED HJUST VJUST RIGHTREADING
+*REMARK* FONTSTYLE FONTFACE
+
+L15             0402CS 6110  -2700 270.000 U M 0 -1 0 -1 3
+VALUE           0           0   0.000 127          35           2 N CENTER CENTER ANGLED
+Regular <Romansim Stroke Font>
+Ref.Des.
+NONE       -34.69      -65.71   0.000  1          45           1 N   LEFT   DOWN
+Regular <Romansim Stroke Font>
+Ref.Des.
+VALUE      -34.69       20.51   0.000  1          50           1 N   LEFT     UP
+Regular <Romansim Stroke Font>
+Part Type
+L16             0402CS 5020  -2265 270.000 U M 0 -1 0 -1 3
+VALUE           0           0   0.000 127          35           2 N CENTER CENTER ANGLED
+Regular <Romansim Stroke Font>
+Ref.Des.
+NONE       -34.69      -65.71   0.000  1          45           1 N   LEFT   DOWN
+Regular <Romansim Stroke Font>
+Ref.Des.
+VALUE      -34.69       20.51   0.000  1          50           1 N   LEFT     UP
+Regular <Romansim Stroke Font>
+Part Type
