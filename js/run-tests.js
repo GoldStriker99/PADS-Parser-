@@ -180,6 +180,43 @@ check("part items wrapped across lines (PADS ~76-char output width)", function (
   var r9 = nl.parts.filter(function (p) { return p.refdes === "R9"; })[0];
   assert(r9.side === "Top", "R9 stays Top");
 });
+check("PADS V10 format: no @decal, label sublines, *PARTTYPE* decal lookup", function () {
+  var data = [
+    "!PADS-POWERPCB-V10.0-MILS-250L! DESIGN DATABASE ASCII FILE 1.0",
+    "*PARTTYPE*   ITEMS",
+    "",
+    "0402CS           IND0402 UND 1 0 0 A",
+    "G 1 2",
+    "CAPX             CAP0402:CAP0402ALT UND 1 0 0 A",
+    "*PART*       ITEMS",
+    "",
+    "*REMARK* REFNM PTYPENM X Y ORI GLUE MIRROR ALT CLSTID CLSTATTR BROTHERID LABELS",
+    "L15             0402CS 6110  -2700 270.000 U M 0 -1 0 -1 3",
+    "VALUE           0           0   0.000 127          35           2 N CENTER CENTER ANGLED",
+    "Regular <Romansim Stroke Font>",
+    "Ref.Des.",
+    "NONE       -34.69      -65.71   0.000  1          45           1 N   LEFT   DOWN",
+    "Regular <Romansim Stroke Font>",
+    "Ref.Des.",
+    "VALUE      -34.69       20.51   0.000  1          50           1 N   LEFT     UP",
+    "Regular <Romansim Stroke Font>",
+    "Part Type",
+    "C7              CAPX 100 200 0.000 U N 0 -1 0 -1 0",
+    "*END*",
+  ].join("\n");
+  var nl = new PADS.PADSParser().parseSync(data);
+  var names = nl.parts.map(function (p) { return p.refdes; }).join(",");
+  assert(nl.parts.length === 2, "expected 2 parts (labels must not become parts), got: " + names);
+  var l15 = nl.parts[0];
+  assert(l15.refdes === "L15" && l15.partType === "0402CS", "L15 identity");
+  assert(l15.x === 6110 && l15.y === -2700 && l15.rotation === 270, "L15 placement");
+  assert(l15.side === "Bottom", "L15 mirrored (U M) -> Bottom, got " + l15.side);
+  assert(l15.decal === "IND0402", "L15 decal from *PARTTYPE*, got '" + l15.decal + "'");
+  var c7 = nl.parts[1];
+  assert(c7.side === "Top", "C7 (U N) -> Top");
+  assert(c7.decal === "CAP0402", "C7 decal = first of colon list, got '" + c7.decal + "'");
+  assert(nl.units === "MILS", "units from V10 header, got " + nl.units);
+});
 check("missing *PART* section -> actionable warning", function () {
   var nl = new PADS.PADSParser().parseSync(
     "!PADS-POWERPCB-V9.5-MILS!\n*ROUTE*\n*SIGNAL* GND\nC1.2 C2.2\n*END*\n"
