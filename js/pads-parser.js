@@ -491,11 +491,34 @@
       "(?:\\s+(.*))?$" // flags: glued, mirror, ...
   );
 
+  // A part item line begins with a refdes token followed by parttype@decal.
+  function isPartCandidate(line) {
+    return /^[A-Za-z_][^\s@]*\s+[^\s@]*@\S/.test(line);
+  }
+
+  // A flags continuation line (when a part item wrapped right after the
+  // rotation field): single-letter flags and numbers only, e.g. "N M 0 -1 0 -1 0".
+  function isFlagsLine(line) {
+    var tokens = line.split(/\s+/);
+    if (!/^[A-Z]$/.test(tokens[0])) return false;
+    for (var i = 1; i < tokens.length; i++) {
+      if (!/^[A-Z]$/.test(tokens[i]) && !/^-?\d+(\.\d+)?$/.test(tokens[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   PADSParser.prototype._parseLayout = function (data) {
     var lines = data.split("\n");
     var section = null;
     var currentNet = null;
     var headerSeen = false;
+    this._partBuf = null; // pending (possibly wrapped) part item line
+    this._lastPartNoFlags = null; // part added without its flag fields yet
+    this._sawPartSection = false;
+    this._unmatchedPartSample = null;
+    this._ignoredPartSample = null;
 
     for (var i = 0; i < lines.length; i++) {
       var lineNum = i + 1;
@@ -518,6 +541,7 @@
       var sec = /^\*([A-Z][A-Z0-9 _-]*)\*/i.exec(line);
       if (sec) {
         var name = sec[1].trim().toUpperCase();
+        this._flushPartBuf();
         if (name === "SIGNAL") {
           this._pushNet(currentNet);
           var fields = line.replace(/^\*SIGNAL\*/i, "").trim().split(/\s+/);
@@ -529,17 +553,13 @@
           this._pushNet(currentNet);
           currentNet = null;
           section = name;
+          if (name === "PART") this._sawPartSection = true;
         }
         continue;
       }
 
       if (section === "PART") {
-        var pm = LAYOUT_PART_RE.exec(line);
-        if (pm) {
-          this._addLayoutPart(pm, lineNum);
-        }
-        // Non-matching lines are part-label sublines (coordinates, font
-        // definitions, "REF-DES", ...) and are intentionally skipped.
+        this._layoutPartLine(line, lineNum);
       } else if (section === "SIGNAL" && currentNet) {
         // Collect refdes.pin tokens; routing vertex lines (pure numbers)
         // and via/layer data won't match the pin pattern.
@@ -561,10 +581,89 @@
         }
       }
     }
+    this._flushPartBuf();
     this._pushNet(currentNet);
 
-    if (this.netlist.parts.length === 0) {
-      this._warn("No parts found in *PART* section of layout file", 0);
+    if (!this._sawPartSection) {
+      this._warn(
+        "No *PART* section found in this layout file — when exporting from " +
+          "PADS Layout, make sure the 'Parts' section is selected in the " +
+          "ASCII Output dialog",
+        0
+      );
+    } else if (this.netlist.parts.length === 0) {
+      var sample = this._unmatchedPartSample || this._ignoredPartSample;
+      this._warn(
+        "A *PART* section was found but no part placement lines were recognized" +
+          (sample
+            ? '. First unrecognized entry (line ' +
+              sample.lineNum +
+              '): "' +
+              sample.line.substring(0, 160) +
+              '"'
+            : " (the section appears to be empty)"),
+        sample ? sample.lineNum : 0
+      );
+    }
+  };
+
+  PADSParser.prototype._flushPartBuf = function () {
+    if (this._partBuf && !this._unmatchedPartSample) {
+      this._unmatchedPartSample = this._partBuf;
+    }
+    this._partBuf = null;
+    this._lastPartNoFlags = null;
+  };
+
+  // Handles one data line inside *PART*. Item lines longer than PADS' output
+  // width (~76 chars) wrap onto continuation lines, so an item may need to be
+  // reassembled from several physical lines before it matches LAYOUT_PART_RE.
+  PADSParser.prototype._layoutPartLine = function (line, lineNum) {
+    var m;
+
+    // Flags that wrapped onto their own line right after the rotation field
+    // (the part was already added; only the mirror flag still matters).
+    if (this._lastPartNoFlags && isFlagsLine(line)) {
+      if (line.split(/\s+/).indexOf("M") >= 0) {
+        this._lastPartNoFlags.side = "Bottom";
+      }
+      this._lastPartNoFlags = null;
+      return;
+    }
+
+    if (this._partBuf) {
+      var joined = this._partBuf.line + " " + line;
+      m = LAYOUT_PART_RE.exec(joined);
+      if (m) {
+        this._addLayoutPart(m, this._partBuf.lineNum);
+        this._partBuf = null;
+        return;
+      }
+      if (isPartCandidate(line)) {
+        // A new item starts; the buffered one never completed.
+        if (!this._unmatchedPartSample) this._unmatchedPartSample = this._partBuf;
+        this._partBuf = null;
+        // fall through to process this line as a fresh item
+      } else if (this._partBuf.appends < 3 && joined.length < 500) {
+        this._partBuf.line = joined;
+        this._partBuf.appends++;
+        return;
+      } else {
+        if (!this._unmatchedPartSample) this._unmatchedPartSample = this._partBuf;
+        this._partBuf = null;
+        return;
+      }
+    }
+
+    m = LAYOUT_PART_RE.exec(line);
+    if (m) {
+      this._addLayoutPart(m, lineNum);
+    } else if (isPartCandidate(line)) {
+      this._partBuf = { line: line, lineNum: lineNum, appends: 0 };
+    } else if (!this._ignoredPartSample) {
+      // Label sublines (coordinates, fonts, "REF-DES", ...) land here; keep
+      // the first one only as a diagnostic sample for zero-part warnings.
+      this._ignoredPartSample = { line: line, lineNum: lineNum };
     }
   };
 
@@ -577,6 +676,7 @@
     var rotRaw = parseFloat(m[6]);
     var flags = (m[7] || "").trim().split(/\s+/);
 
+    this._lastPartNoFlags = null;
     for (var i = 0; i < this.netlist.parts.length; i++) {
       if (this.netlist.parts[i].refdes.toLowerCase() === refdes.toLowerCase()) {
         this._fail(ErrorCodes.DUPLICATE_PART, lineNum);
@@ -597,7 +697,7 @@
       }
     }
 
-    this.netlist.parts.push({
+    var part = {
       refdes: refdes,
       footprint: decal,
       value: partType || undefined,
@@ -607,7 +707,13 @@
       x: x,
       y: y,
       rotation: rotation,
-    });
+    };
+    this.netlist.parts.push(part);
+
+    // If the item wrapped immediately after the rotation field, its flags
+    // (including the mirror flag) arrive on the next line — remember the
+    // part so _layoutPartLine can still set its side.
+    if (!m[7] || !m[7].trim()) this._lastPartNoFlags = part;
   };
 
   /* ------------------------------------------------------------------ */
