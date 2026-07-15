@@ -975,16 +975,47 @@
     return rows;
   }
 
+  // Case-insensitive attribute lookup ("EDU Part Number" vs "EDU PART NUMBER").
+  function getAttrCI(part, name) {
+    var attrs = part.attributes || {};
+    var keys = Object.keys(attrs);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].toUpperCase() === name.toUpperCase()) return attrs[keys[i]];
+    }
+    return "";
+  }
+
   /**
    * Rows shaped for a schematic-parts spreadsheet. For plain netlists:
    * Ref Des | Part Type. For PADS Logic schematic exports, adds the PCB
    * decal, gate count, sheet list, and one column per part attribute found
    * in the design (pin-level SIGPIN* attributes excluded).
+   *
+   * With `compact` set, always emits exactly five columns regardless of
+   * format: Ref Des | Part Type | PCB Decal | EDU Part Number |
+   * FLIGHT Part Number (the part-number columns are blank for formats
+   * that don't carry attributes).
    */
-  function schematicPartsTable(netlist, includeHeader) {
+  function schematicPartsTable(netlist, includeHeader, compact) {
     var rows = [];
     var parts = sortedParts(netlist);
     var isLogic = netlist.format === "logic";
+
+    if (compact) {
+      if (includeHeader !== false) {
+        rows.push(["Ref Des", "Part Type", "PCB Decal", "EDU Part Number", "FLIGHT Part Number"]);
+      }
+      parts.forEach(function (p) {
+        rows.push([
+          p.refdes,
+          p.partType,
+          p.decal || "",
+          getAttrCI(p, "EDU Part Number"),
+          getAttrCI(p, "FLIGHT Part Number"),
+        ]);
+      });
+      return rows;
+    }
 
     if (!isLogic) {
       if (includeHeader !== false) rows.push(["Ref Des", "Part Type"]);

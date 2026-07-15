@@ -337,6 +337,26 @@ check("logic export: schematic table has attribute columns", function () {
   assert(u3row[3] === 2 && u3row[2] === "AWMF-0245-BGA", "U3 gates=2 and decal in row");
 });
 
+check("logic export: compact schematic table (5 fixed columns)", function () {
+  var nl = new PADS.PADSParser().parseSync(LOGIC_SAMPLE);
+  var rows = PADS.schematicPartsTable(nl, true, true);
+  assert(
+    rows[0].join("|") === "Ref Des|Part Type|PCB Decal|EDU Part Number|FLIGHT Part Number",
+    "compact header, got " + rows[0].join("|")
+  );
+  var u3 = rows.filter(function (r) { return r[0] === "U3"; })[0];
+  assert(
+    u3.join("|") === "U3|12110305-001|AWMF-0245-BGA|12110305-002|",
+    "U3 compact row, got " + u3.join("|")
+  );
+  // compact also works for plain netlist files (part numbers blank)
+  var nl2 = new PADS.PADSParser().parseSync(
+    "*PADS-PCB*\n*PART*\nR1 10k@0603\n*NET*\n*SIGNAL* N1\nR1.1\n*END*\n"
+  );
+  var r1 = PADS.schematicPartsTable(nl2, false, true)[0];
+  assert(r1.join("|") === "R1|10k|0603||", "netlist compact row, got " + r1.join("|"));
+});
+
 console.log("\nExport helpers:");
 check("toLayoutPartsTSV shape + natural sort", function () {
   var nl = parseFile(path.join(__dirname, "examples", "layout_basic.asc"));

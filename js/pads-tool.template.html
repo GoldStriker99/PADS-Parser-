@@ -111,7 +111,9 @@ Runs entirely in your browser — no install, no network, nothing leaves this pa
   </div>
   <p class="note">“Copy Layout Parts” puts tab-separated columns on the clipboard —
     <em>Ref Des, Part Type, Decal/Footprint, Side, X, Y, Rotation</em> — ready to paste into an
-    Excel parts sheet. “Copy Schematic Parts” copies <em>Ref Des, Part Type</em> only.</p>
+    Excel parts sheet. “Copy Schematic Parts” copies <em>Ref Des, Part Type, PCB Decal,
+    EDU Part Number, FLIGHT Part Number</em> (part numbers filled from schematic attributes
+    when present). The full attribute set is in the Parts tab and the Parts CSV download.</p>
 
   <div class="tabs" id="tabs">
     <button data-tab="parts" class="active">Parts</button>
@@ -313,7 +315,12 @@ Runs entirely in your browser — no install, no network, nothing leaves this pa
   });
   $("copySchem").addEventListener("click", function () {
     if (!netlist) return;
-    copyText(rowsToTSV(withHeader(PADS.schematicPartsTable)), "Schematic parts");
+    copyText(
+      rowsToTSV(withHeader(function (nl) {
+        return PADS.schematicPartsTable(nl, true, true); // compact: 5 columns
+      })),
+      "Schematic parts"
+    );
   });
   $("copyBom").addEventListener("click", function () {
     if (!netlist) return;
