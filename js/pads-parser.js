@@ -481,19 +481,28 @@
   /* ------------------- layout (!PADS-POWERPCB-...) ------------------- */
 
   // Placement line inside *PART*:
-  //   refdes  parttype@decal  x  y  rotation  glued  mirror  ...
+  //   refdes  parttype[@decal]  x  y  rotation  glued mirror alt clstid ...
+  // The @decal suffix appears only when the part uses a non-default decal
+  // (V10 exports typically omit it). The trailing flag fields must look like
+  // one or two single-letter flags followed by numbers — that structure is
+  // what tells a real part line apart from the label sublines that follow it
+  // (e.g. "VALUE 0 0 0.000 127 35 2 N CENTER CENTER ANGLED").
   var LAYOUT_PART_RE = new RegExp(
-    "^(\\S+)\\s+" + // refdes
-      "([^@\\s]*)@(\\S+)\\s+" + // parttype@decal
+    "^([A-Za-z_]\\S*)\\s+" + // refdes
+      "([^@\\s]+)(?:@(\\S+))?\\s+" + // parttype, optional @decal
       "(-?[\\d.]+)\\s+" + // x
       "(-?[\\d.]+)\\s+" + // y
       "(-?[\\d.]+)" + // rotation
-      "(?:\\s+(.*))?$" // flags: glued, mirror, ...
+      "(?:\\s+([A-Z](?:\\s+[A-Z])?(?:\\s+-?[\\d.]+)*))?\\s*$" // flags
   );
 
-  // A part item line begins with a refdes token followed by parttype@decal.
+  // A (possibly wrapped) part item line begins with a refdes token followed
+  // by parttype@decal, or by a part type and at least one coordinate.
   function isPartCandidate(line) {
-    return /^[A-Za-z_][^\s@]*\s+[^\s@]*@\S/.test(line);
+    return (
+      /^[A-Za-z_][^\s@]*\s+[^\s@]*@\S/.test(line) ||
+      /^[A-Za-z_][^\s@]*\s+[^\s@]+\s+-?[\d.]+(\s|$)/.test(line)
+    );
   }
 
   // A flags continuation line (when a part item wrapped right after the
@@ -519,6 +528,7 @@
     this._sawPartSection = false;
     this._unmatchedPartSample = null;
     this._ignoredPartSample = null;
+    this._ptypeDecals = {}; // part type -> default decal, from *PARTTYPE*
 
     for (var i = 0; i < lines.length; i++) {
       var lineNum = i + 1;
@@ -560,6 +570,8 @@
 
       if (section === "PART") {
         this._layoutPartLine(line, lineNum);
+      } else if (section === "PARTTYPE") {
+        this._parttypeLine(line);
       } else if (section === "SIGNAL" && currentNet) {
         // Collect refdes.pin tokens; routing vertex lines (pure numbers)
         // and via/layer data won't match the pin pattern.
@@ -583,6 +595,16 @@
     }
     this._flushPartBuf();
     this._pushNet(currentNet);
+
+    // Fill in default decals from *PARTTYPE* for parts without an explicit
+    // @decal on their placement line.
+    for (var pi = 0; pi < this.netlist.parts.length; pi++) {
+      var part = this.netlist.parts[pi];
+      if (!part.decal && this._ptypeDecals[part.partType]) {
+        part.decal = this._ptypeDecals[part.partType];
+        part.footprint = part.decal;
+      }
+    }
 
     if (!this._sawPartSection) {
       this._warn(
@@ -670,11 +692,12 @@
   PADSParser.prototype._addLayoutPart = function (m, lineNum) {
     var refdes = m[1];
     var partType = m[2];
-    var decal = m[3];
+    var decal = m[3] || ""; // often absent; filled in from *PARTTYPE* later
     var x = parseFloat(m[4]);
     var y = parseFloat(m[5]);
     var rotRaw = parseFloat(m[6]);
-    var flags = (m[7] || "").trim().split(/\s+/);
+    var flagStr = (m[7] || "").trim();
+    var flags = flagStr ? flagStr.split(/\s+/) : [];
 
     this._lastPartNoFlags = null;
     for (var i = 0; i < this.netlist.parts.length; i++) {
@@ -688,13 +711,16 @@
     // for 270°). Values above 360 are assumed to use that encoding.
     var rotation = rotRaw > 360 ? rotRaw / 10 : rotRaw;
 
-    // The mirror flag ('M') means the part is on the bottom side.
+    // Flag fields are: glued, mirror, ... — the second letter is the mirror
+    // flag, and 'M' means the part sits on the bottom side. If the line
+    // wrapped before the mirror flag, leave the side pending; a flags
+    // continuation line will resolve it.
     var mirrored = false;
-    for (var f = 0; f < flags.length; f++) {
-      if (flags[f] === "M") {
-        mirrored = true;
-        break;
-      }
+    var mirrorPending = false;
+    if (flags.length >= 2) {
+      mirrored = flags[1] === "M";
+    } else {
+      mirrorPending = true;
     }
 
     var part = {
@@ -709,11 +735,22 @@
       rotation: rotation,
     };
     this.netlist.parts.push(part);
+    if (mirrorPending) this._lastPartNoFlags = part;
+  };
 
-    // If the item wrapped immediately after the rotation field, its flags
-    // (including the mirror flag) arrive on the next line — remember the
-    // part so _layoutPartLine can still set its side.
-    if (!m[7] || !m[7].trim()) this._lastPartNoFlags = part;
+  // Item line inside *PARTTYPE*: "typename decal[:altdecal...] family ...".
+  // Records the default decal so *PART* entries without an explicit @decal
+  // still get a footprint. Gate/pin sublines never match (their second
+  // token is numeric or they start with a digit or quote).
+  PADSParser.prototype._parttypeLine = function (line) {
+    var m = /^([^\s"]+)\s+([^\s"]+)/.exec(line);
+    if (!m) return;
+    // Type names may start with a digit (e.g. "0402CS"), but neither field
+    // is ever purely numeric on an item line — that filters gate/pin rows.
+    if (/^-?[\d.]+$/.test(m[1]) || /^-?[\d.]+$/.test(m[2])) return;
+    if (this._ptypeDecals[m[1]] === undefined) {
+      this._ptypeDecals[m[1]] = m[2].split(":")[0];
+    }
   };
 
   /* ------------------------------------------------------------------ */
