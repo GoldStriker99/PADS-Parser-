@@ -360,6 +360,26 @@ check("logic export: schematic table has attribute columns", function () {
   assert(u3row[3] === 2 && u3row[2] === "AWMF-0245-BGA", "U3 gates=2 and decal in row");
 });
 
+check("logic export: purely numeric part types (e.g. 44907) are kept", function () {
+  var data = [
+    "*PADS-LOGIC-V9.0* DESIGN EXPORT FILE FROM PADS LOGIC VVX.2.15",
+    "*SHT*   9 9_TERMINATIONS -1 $$$NONE",
+    "*PART*       ITEMS",
+    "",
+    "RT68         44907            2800  3500   90 1 80 8 80 8 4 12 2 0 0 26",
+    '"Default Font"',
+    '"PCB DECAL" 0402',
+    "0 140 20 0 1",
+    "*CONNECTION*",
+    "*SIGNAL* TERM_A 0 0",
+    "RT68.2       @@@D896      2 0",
+  ].join("\n");
+  var nl = new PADS.PADSParser().parseSync(data);
+  assert(nl.parts.length === 1, "RT68 must not be skipped, got " + nl.parts.length + " parts");
+  assert(nl.parts[0].refdes === "RT68" && nl.parts[0].partType === "44907", "RT68/44907");
+  assert(nl.parts[0].decal === "0402", "numeric PCB DECAL attribute kept");
+  assert(nl.nets.length === 1 && nl.nets[0].pins[0].refdes === "RT68", "RT68 pin in net");
+});
 check("logic export: compact schematic table (5 fixed columns)", function () {
   var nl = new PADS.PADSParser().parseSync(LOGIC_SAMPLE);
   var rows = PADS.schematicPartsTable(nl, true, true);

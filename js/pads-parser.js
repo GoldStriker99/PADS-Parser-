@@ -788,8 +788,12 @@
   function logicPartMatch(line) {
     var tokens = line.split(/\s+/);
     if (tokens.length < 6) return null;
+    // The refdes always starts with a letter (or $ for power symbols) —
+    // that alone filters label geometry rows, which start with a number.
+    // The part type may be purely numeric (e.g. "44907"), so it gets no
+    // format check of its own.
     if (!/^[A-Za-z$][^\s"]*$/.test(tokens[0])) return null;
-    if (/^-?[\d.]+$/.test(tokens[1])) return null;
+    if (tokens[1].charAt(0) === '"') return null;
     for (var i = 2; i < tokens.length; i++) {
       if (!/^-?[\d.]+$/.test(tokens[i])) return null;
     }
