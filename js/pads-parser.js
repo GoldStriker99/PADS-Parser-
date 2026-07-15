@@ -504,9 +504,11 @@
       if (!line) continue;
 
       if (!headerSeen) {
-        var m = /^!PADS-POWERPCB-V([\d.]+)-(\w+)/i.exec(line);
+        // Version token may be numeric ("V9.5", "V2007.0") or not ("VX.2"),
+        // so anchor on the known units keywords instead.
+        var m = /^!PADS-POWERPCB-V.*?-(MILS|METRIC|INCHES|BASIC)\b/i.exec(line);
         if (m) {
-          this.netlist.units = m[2].toUpperCase(); // MILS | METRIC | INCHES | BASIC
+          this.netlist.units = m[1].toUpperCase();
         }
         headerSeen = true;
         continue;
