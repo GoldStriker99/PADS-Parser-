@@ -190,6 +190,9 @@
       if (/^!PADS-POWERPCB/i.test(line) || /^\*PADS-LAYOUT/i.test(line)) {
         return "layout";
       }
+      if (isKeyword(line, "*PADS-LOGIC")) {
+        return "logic";
+      }
       return "unknown";
     }
     return "unknown";
@@ -243,6 +246,8 @@
 
     if (format === "layout") {
       this._parseLayout(String(data));
+    } else if (format === "logic") {
+      this._parseLogic(String(data));
     } else {
       // Unknown headers go through the netlist path, which reports
       // INVALID_FILE_HEADER with a line number.
@@ -753,6 +758,170 @@
     }
   };
 
+  /* ------------------- schematic (*PADS-LOGIC-...*) ------------------ */
+
+  // Gate decorator on schematic refdes / pins: "U3-A" is gate A of part U3.
+  var GATE_SUFFIX_RE = /-([A-Z]{1,2})$/;
+
+  // Part placement line inside a sheet's *PART* section:
+  //   refdes parttype x y ori mirror <font/label size fields...>
+  // Everything after the part type is numeric, which separates these from
+  // label sublines (start with a digit), label names ("REF-DES", "*") and
+  // quoted attribute/font lines.
+  function logicPartMatch(line) {
+    var tokens = line.split(/\s+/);
+    if (tokens.length < 6) return null;
+    if (!/^[A-Za-z$][^\s"]*$/.test(tokens[0])) return null;
+    if (/^-?[\d.]+$/.test(tokens[1])) return null;
+    for (var i = 2; i < tokens.length; i++) {
+      if (!/^-?[\d.]+$/.test(tokens[i])) return null;
+    }
+    return { refdes: tokens[0], partType: tokens[1] };
+  }
+
+  PADSParser.prototype._parseLogic = function (data) {
+    var lines = data.split("\n");
+    var section = null;
+    var sheetName = null;
+    var currentNet = null;
+    var currentPart = null;
+    var netsByName = {};
+    var partsByRefdes = {};
+    var order = [];
+    var headerSeen = false;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/\r$/, "").trim();
+      if (!line) continue;
+
+      if (!headerSeen) {
+        headerSeen = true; // *PADS-LOGIC-Vx.x* ... (no units in this header)
+        continue;
+      }
+
+      var sec = /^\*([A-Z][A-Z0-9 _-]*)\*/i.exec(line);
+      if (sec) {
+        var name = sec[1].trim().toUpperCase();
+        currentPart = null;
+        if (name === "SHT") {
+          // *SHT*  <number> <name> ...
+          var sf = line.split(/\s+/);
+          sheetName = sf[2] || (sf[1] ? "Sheet " + sf[1] : null);
+          section = null;
+        } else if (name === "SIGNAL") {
+          var nf = line.replace(/^\*SIGNAL\*/i, "").trim().split(/\s+/);
+          var netName = nf[0] || "";
+          if (netName) {
+            if (!netsByName[netName]) {
+              netsByName[netName] = { name: netName, pins: [] };
+              this.netlist.nets.push(netsByName[netName]);
+            }
+            currentNet = netsByName[netName]; // nets span sheets: merge
+          } else {
+            currentNet = null;
+          }
+          section = "SIGNAL";
+        } else {
+          currentNet = null;
+          section = name;
+        }
+        continue;
+      }
+
+      if (section === "PART") {
+        // Attribute line attached to the current part: "Name" value
+        // (quote-only lines are font specs; empty-valued attributes are
+        // indistinguishable from them and get skipped, which is fine).
+        var am = /^"([^"]+)"\s+(\S.*)$/.exec(line);
+        if (am && currentPart) {
+          var key = am[1];
+          if (currentPart.attributes[key] === undefined) {
+            currentPart.attributes[key] = am[2].trim();
+          }
+          if (key.toUpperCase() === "PCB DECAL" && !currentPart.decal) {
+            currentPart.decal = am[2].trim();
+            currentPart.footprint = currentPart.decal;
+          }
+          continue;
+        }
+
+        var pm = logicPartMatch(line);
+        if (pm) {
+          // Power/ground/off-page symbols use $-prefixed names; not parts.
+          if (pm.refdes.charAt(0) === "$" || pm.partType.charAt(0) === "$") {
+            currentPart = null;
+            continue;
+          }
+          var gm = GATE_SUFFIX_RE.exec(pm.refdes);
+          var base = gm ? pm.refdes.substring(0, gm.index) : pm.refdes;
+          var gate = gm ? gm[1] : null;
+
+          var part = partsByRefdes[base.toLowerCase()];
+          if (!part) {
+            part = {
+              refdes: base,
+              footprint: "",
+              value: pm.partType,
+              partType: pm.partType,
+              decal: "",
+              side: null,
+              x: null,
+              y: null,
+              rotation: null,
+              gates: [],
+              sheets: [],
+              attributes: {},
+            };
+            partsByRefdes[base.toLowerCase()] = part;
+            order.push(part);
+          }
+          if (gate && part.gates.indexOf(gate) < 0) part.gates.push(gate);
+          if (sheetName && part.sheets.indexOf(sheetName) < 0) {
+            part.sheets.push(sheetName);
+          }
+          currentPart = part;
+        }
+        // Everything else in *PART* is label/font geometry — skipped.
+      } else if (section === "SIGNAL" && currentNet) {
+        // Connection line: <endpoint> <endpoint> <n> <flags>, where an
+        // endpoint is a pin (RefDes.Pin, refdes possibly gate-decorated),
+        // an off-page ref (@@@O12) or a junction (@@@D461). Wire vertex
+        // lines that follow have only two numeric tokens and don't match.
+        var cm = /^(\S+)\s+(\S+)\s+-?\d+/.exec(line);
+        if (cm) {
+          for (var e = 1; e <= 2; e++) {
+            var pt = PIN_TOKEN_RE.exec(cm[e]);
+            if (!pt || pt[1].charAt(0) === "$") continue;
+            var pRef = pt[1].replace(GATE_SUFFIX_RE, "");
+            var pPin = pt[2];
+            var dup = false;
+            for (var q = 0; q < currentNet.pins.length; q++) {
+              if (currentNet.pins[q].refdes === pRef && currentNet.pins[q].pin === pPin) {
+                dup = true;
+                break;
+              }
+            }
+            if (!dup) currentNet.pins.push({ refdes: pRef, pin: pPin });
+          }
+        }
+      }
+      // *PARTTYPE*, *NETNAMES*, *BUSSES*, *OFFPAGE REFS*, *TIEDOTS*, ... skipped
+    }
+
+    this.netlist.parts = order;
+    this.netlist.nets = this.netlist.nets.filter(function (n) {
+      return n.pins.length > 0;
+    });
+
+    if (this.netlist.parts.length === 0) {
+      this._warn(
+        "No parts found — when exporting from PADS Logic (File > Export), " +
+          "make sure the 'Parts' section is selected",
+        0
+      );
+    }
+  };
+
   /* ------------------------------------------------------------------ */
   /* Export helpers (for spreadsheet workflows)                          */
   /* ------------------------------------------------------------------ */
@@ -806,14 +975,83 @@
     return rows;
   }
 
+  // Case-insensitive attribute lookup ("EDU Part Number" vs "EDU PART NUMBER").
+  function getAttrCI(part, name) {
+    var attrs = part.attributes || {};
+    var keys = Object.keys(attrs);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].toUpperCase() === name.toUpperCase()) return attrs[keys[i]];
+    }
+    return "";
+  }
+
   /**
-   * Rows shaped for a schematic-parts spreadsheet: Ref Des | Part Type
+   * Rows shaped for a schematic-parts spreadsheet. For plain netlists:
+   * Ref Des | Part Type. For PADS Logic schematic exports, adds the PCB
+   * decal, gate count, sheet list, and one column per part attribute found
+   * in the design (pin-level SIGPIN* attributes excluded).
+   *
+   * With `compact` set, always emits exactly five columns regardless of
+   * format: Ref Des | Part Type | PCB Decal | EDU Part Number |
+   * FLIGHT Part Number (the part-number columns are blank for formats
+   * that don't carry attributes).
    */
-  function schematicPartsTable(netlist, includeHeader) {
+  function schematicPartsTable(netlist, includeHeader, compact) {
     var rows = [];
-    if (includeHeader !== false) rows.push(["Ref Des", "Part Type"]);
-    sortedParts(netlist).forEach(function (p) {
-      rows.push([p.refdes, p.partType]);
+    var parts = sortedParts(netlist);
+    var isLogic = netlist.format === "logic";
+
+    if (compact) {
+      if (includeHeader !== false) {
+        rows.push(["Ref Des", "Part Type", "PCB Decal", "EDU Part Number", "FLIGHT Part Number"]);
+      }
+      parts.forEach(function (p) {
+        rows.push([
+          p.refdes,
+          p.partType,
+          p.decal || "",
+          getAttrCI(p, "EDU Part Number"),
+          getAttrCI(p, "FLIGHT Part Number"),
+        ]);
+      });
+      return rows;
+    }
+
+    if (!isLogic) {
+      if (includeHeader !== false) rows.push(["Ref Des", "Part Type"]);
+      parts.forEach(function (p) {
+        rows.push([p.refdes, p.partType]);
+      });
+      return rows;
+    }
+
+    var attrKeys = [];
+    parts.forEach(function (p) {
+      Object.keys(p.attributes || {}).forEach(function (k) {
+        if (k.toUpperCase() === "PCB DECAL") return;
+        if (/^SIGPIN/i.test(k)) return;
+        if (attrKeys.indexOf(k) < 0) attrKeys.push(k);
+      });
+    });
+    attrKeys.sort(naturalCompare);
+
+    if (includeHeader !== false) {
+      rows.push(
+        ["Ref Des", "Part Type", "PCB Decal", "Gates", "Sheet(s)"].concat(attrKeys)
+      );
+    }
+    parts.forEach(function (p) {
+      var row = [
+        p.refdes,
+        p.partType,
+        p.decal,
+        (p.gates && p.gates.length) || 1,
+        (p.sheets || []).join(", "),
+      ];
+      attrKeys.forEach(function (k) {
+        row.push((p.attributes && p.attributes[k]) || "");
+      });
+      rows.push(row);
     });
     return rows;
   }
