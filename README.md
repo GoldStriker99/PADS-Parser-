@@ -1,7 +1,3 @@
-Here is an improved version of the README with a more detailed description of the file formats and the system:
-
----
-
 # PADS Layout Parser
 
 [![npm version](https://badge.fury.io/js/pads-layout-parser.svg)](https://badge.fury.io/js/pads-layout-parser)
@@ -27,6 +23,48 @@ To install the **PADS Layout Parser** library via npm, use the following command
 
 ```bash
 npm install pads-layout-parser
+```
+
+## 🌐 Plain JavaScript build (no Node.js / TypeScript required)
+
+The [`js/`](js/) folder contains a standalone JavaScript version of the parser for
+environments where Node.js and TypeScript are not available (e.g. locked-down work
+computers):
+
+- **`js/pads-tool.html`** — a self-contained browser app. Copy this single file
+  anywhere, double-click it, and drop a `.asc` / `.pads` file onto the page (or paste
+  the text). It shows parts, nets, a BOM cross-check, and errors/warnings, and can
+  copy tab-separated data straight into Excel (Ref Des, Part Type, Decal/Footprint,
+  Side, X, Y, Rotation) or download CSV/JSON. Everything runs locally in the browser;
+  no network access, no install.
+- **`js/pads-parser.js`** — the parser as a single dependency-free script. Load it
+  with a `<script>` tag (creates the `window.PADS` global) or `require()` it from
+  Node/CommonJS.
+
+The JavaScript build additionally auto-detects and parses **PADS Layout design ASCII
+exports** (`!PADS-POWERPCB-Vx.x-UNITS!` header, as produced by PADS Layout
+*File → Export*), extracting part placement (part type, decal, X, Y, rotation, board
+side) from the `*PART*` section and pin connections from `*SIGNAL*` blocks — in
+addition to the `*PADS-PCB*` netlist format the TypeScript library handles.
+
+Behavioral notes (deliberate differences from the TypeScript library): control
+statements are matched case-insensitively, sections may appear in any order, inline
+`//` comments are stripped, name-length limits produce warnings instead of errors,
+and names are never truncated.
+
+```js
+// Browser (after loading a script tag with src="js/pads-parser.js"):
+const parser = new PADS.PADSParser(true); // true = lenient mode
+const netlist = parser.parseSync(padsFileText);
+console.log(netlist.format, netlist.parts, netlist.nets, netlist.errors);
+console.log(PADS.toLayoutPartsTSV(netlist)); // paste-ready for Excel
+```
+
+Development helpers (need Node.js, but only for maintaining the tool itself):
+
+```bash
+node js/run-tests.js   # runs the JS parser against the fixtures in __tests__/
+node js/build-tool.js  # re-inlines pads-parser.js into pads-tool.html
 ```
 
 ## 📖 Usage Examples

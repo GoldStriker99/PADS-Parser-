@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PADS ASCII Parser Tool</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1c2733; --muted: #5c6b7a;
+    --border: #d6dde4; --accent: #0b6bcb; --accent-text: #ffffff;
+    --ok: #1a7f37; --warn: #9a6700; --err: #c2323d; --row: #f0f4f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181d; --panel: #1d232a; --text: #e4e9ee; --muted: #97a4b1;
+      --border: #333c46; --accent: #4c9fe8; --accent-text: #0e1319;
+      --ok: #4ac26b; --warn: #d4a72c; --err: #ff7b83; --row: #232b34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.25rem; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem; margin-bottom: 1rem;
+  }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 8px; padding: 1.25rem;
+    text-align: center; color: var(--muted); cursor: pointer; transition: border-color .15s;
+  }
+  .drop.hover { border-color: var(--accent); color: var(--accent); }
+  textarea {
+    width: 100%; min-height: 130px; margin-top: .75rem; padding: .5rem;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical;
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .75rem; }
+  button {
+    background: var(--accent); color: var(--accent-text); border: 0; border-radius: 6px;
+    padding: .45rem .9rem; font-weight: 600; cursor: pointer; font-size: .85rem;
+  }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  label.chk { color: var(--muted); display: inline-flex; gap: .35rem; align-items: center; }
+  .stats { display: flex; flex-wrap: wrap; gap: .75rem; }
+  .stat {
+    background: var(--row); border: 1px solid var(--border); border-radius: 6px;
+    padding: .4rem .8rem; min-width: 88px;
+  }
+  .stat b { display: block; font-size: 1.1rem; }
+  .stat span { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .stat.err b { color: var(--err); } .stat.warn b { color: var(--warn); } .stat.ok b { color: var(--ok); }
+  .tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: .75rem; flex-wrap: wrap; }
+  .tabs button {
+    background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: .4rem .8rem;
+  }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+  th, td { border: 1px solid var(--border); padding: .3rem .55rem; text-align: left; vertical-align: top; }
+  th { background: var(--row); position: sticky; top: 0; }
+  tr:nth-child(even) td { background: var(--row); }
+  .tablewrap { max-height: 430px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .msg-err { color: var(--err); } .msg-warn { color: var(--warn); }
+  .badge {
+    display: inline-block; background: var(--row); border: 1px solid var(--border);
+    border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; color: var(--muted); margin-left: .4rem;
+  }
+  .flash { color: var(--ok); font-weight: 600; margin-left: .5rem; }
+  .hidden { display: none; }
+  .note { color: var(--muted); font-size: .8rem; margin-top: .5rem; }
+</style>
+</head>
+<body>
+
+<h1>PADS ASCII Parser Tool</h1>
+<p class="sub">Parses PADS netlist files (<code>*PADS-PCB*</code>) and PADS Layout ASCII exports
+(<code>!PADS-POWERPCB-...</code>). Runs entirely in your browser — no install, no network, nothing leaves this page.</p>
+
+<div class="panel">
+  <div class="drop" id="drop" tabindex="0">
+    <strong>Drop a .asc / .pads file here</strong> or click to browse
+    <input type="file" id="file" accept=".asc,.pads,.txt,.net" class="hidden">
+  </div>
+  <textarea id="input" placeholder="…or paste PADS ASCII text here" spellcheck="false"></textarea>
+  <div class="controls">
+    <button id="parseBtn">Parse</button>
+    <label class="chk"><input type="checkbox" id="lenient" checked>
+      Lenient mode (collect errors and keep going)</label>
+    <span id="fileName" class="badge hidden"></span>
+  </div>
+</div>
+
+<div class="panel hidden" id="results">
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <button id="copyLayout">Copy Layout Parts (paste into tracker)</button>
+    <button id="copySchem" class="secondary">Copy Schematic Parts</button>
+    <button id="copyBom" class="secondary">Copy BOM Check</button>
+    <button id="csvParts" class="secondary">Parts CSV</button>
+    <button id="csvNets" class="secondary">Nets CSV</button>
+    <button id="dlJson" class="secondary">JSON</button>
+    <label class="chk"><input type="checkbox" id="withHeader"> Include header row in copies</label>
+    <span id="flash" class="flash hidden"></span>
+  </div>
+  <p class="note">“Copy Layout Parts” puts tab-separated columns on the clipboard —
+    <em>Ref Des, Part Type, Decal/Footprint, Side, X, Y, Rotation</em> — ready to paste into an
+    Excel parts sheet. “Copy Schematic Parts” copies <em>Ref Des, Part Type</em> only.</p>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="parts" class="active">Parts</button>
+    <button data-tab="nets">Nets</button>
+    <button data-tab="bom">BOM Check</button>
+    <button data-tab="issues">Errors &amp; Warnings</button>
+  </div>
+  <div id="tab-parts" class="tablewrap"></div>
+  <div id="tab-nets" class="tablewrap hidden"></div>
+  <div id="tab-bom" class="tablewrap hidden"></div>
+  <div id="tab-issues" class="hidden"></div>
+</div>
+
+<script>
+//__PADS_PARSER_SOURCE__
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var netlist = null;
+  var baseName = "pads";
+
+  /* ---------- input handling ---------- */
+
+  var drop = $("drop"), fileInput = $("file");
+  drop.addEventListener("click", function () { fileInput.click(); });
+  drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("hover"); });
+  drop.addEventListener("dragleave", function () { drop.classList.remove("hover"); });
+  drop.addEventListener("drop", function (e) {
+    e.preventDefault(); drop.classList.remove("hover");
+    if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files.length) loadFile(fileInput.files[0]);
+  });
+  $("parseBtn").addEventListener("click", function () { runParse($("input").value); });
+
+  function loadFile(f) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      baseName = f.name.replace(/\.[^.]+$/, "") || "pads";
+      $("fileName").textContent = f.name;
+      $("fileName").classList.remove("hidden");
+      $("input").value = reader.result;
+      runParse(reader.result);
+    };
+    reader.readAsText(f);
+  }
+
+  /* ---------- parsing ---------- */
+
+  function runParse(text) {
+    if (!text || !text.trim()) { alert("Nothing to parse — load a file or paste text first."); return; }
+    var parser = new PADS.PADSParser($("lenient").checked);
+    try {
+      netlist = parser.parseSync(text);
+    } catch (e) {
+      netlist = parser.netlist; // strict mode threw; show what we have plus the error
+      netlist.errors = parser.errors;
+      netlist.warnings = parser.warnings;
+    }
+    render();
+  }
+
+  /* ---------- rendering ---------- */
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function tableHTML(rows) {
+    if (rows.length <= 1) return "<p class='note' style='padding:.5rem'>No data.</p>";
+    var MAX = 3000;
+    var html = "<table><thead><tr>";
+    rows[0].forEach(function (h) { html += "<th>" + esc(h) + "</th>"; });
+    html += "</tr></thead><tbody>";
+    rows.slice(1, MAX + 1).forEach(function (r) {
+      html += "<tr>";
+      r.forEach(function (c) { html += "<td>" + esc(c) + "</td>"; });
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    if (rows.length - 1 > MAX) {
+      html += "<p class='note' style='padding:.5rem'>Showing first " + MAX +
+        " of " + (rows.length - 1) + " rows (exports include everything).</p>";
+    }
+    return html;
+  }
+
+  function stat(label, value, cls) {
+    return "<div class='stat " + (cls || "") + "'><b>" + esc(value) + "</b><span>" +
+      esc(label) + "</span></div>";
+  }
+
+  function render() {
+    $("results").classList.remove("hidden");
+    var pinCount = netlist.nets.reduce(function (a, n) { return a + n.pins.length; }, 0);
+    var fmtLabel = netlist.format === "layout" ? "Layout ASCII"
+      : netlist.format === "netlist" ? "Netlist" : "Unknown";
+    $("stats").innerHTML =
+      stat("Format", fmtLabel + (netlist.units ? " · " + netlist.units : "")) +
+      stat("Parts", netlist.parts.length) +
+      stat("Nets", netlist.nets.length) +
+      stat("Pins in nets", pinCount) +
+      stat("Errors", netlist.errors.length, netlist.errors.length ? "err" : "ok") +
+      stat("Warnings", netlist.warnings.length, netlist.warnings.length ? "warn" : "ok");
+
+    $("tab-parts").innerHTML = tableHTML(PADS.layoutPartsTable(netlist));
+    $("tab-nets").innerHTML = tableHTML(PADS.netsTable(netlist));
+    $("tab-bom").innerHTML = tableHTML(PADS.bomSummaryTable(netlist));
+
+    var issues = "";
+    netlist.errors.forEach(function (e) {
+      issues += "<p class='msg-err'>✖ [" + esc(e.code) + "] " + esc(e.message) + "</p>";
+    });
+    netlist.warnings.forEach(function (w) {
+      issues += "<p class='msg-warn'>⚠ " + esc(w.message) +
+        (w.line ? " (line " + w.line + ")" : "") + "</p>";
+    });
+    $("tab-issues").innerHTML = issues || "<p class='msg-err' style='color:var(--ok)'>✔ No errors or warnings.</p>";
+  }
+
+  /* ---------- tabs ---------- */
+
+  $("tabs").addEventListener("click", function (e) {
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    Array.prototype.forEach.call($("tabs").children, function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    ["parts", "nets", "bom", "issues"].forEach(function (t) {
+      $("tab-" + t).classList.toggle("hidden", t !== btn.dataset.tab);
+    });
+  });
+
+  /* ---------- exports ---------- */
+
+  function flash(msg) {
+    var el = $("flash");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+    clearTimeout(flash._t);
+    flash._t = setTimeout(function () { el.classList.add("hidden"); }, 2500);
+  }
+
+  function copyText(text, what) {
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); flash(what + " copied ✔"); }
+      catch (e) { alert("Copy failed — your browser blocked clipboard access."); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(what + " copied ✔"); },
+        fallback
+      );
+    } else fallback();
+  }
+
+  function download(name, text, mime) {
+    var blob = new Blob([text], { type: mime || "text/plain" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
+  function rowsToTSV(rows) {
+    return rows.map(function (r) {
+      return r.map(function (c) { return c == null ? "" : String(c); }).join("\t");
+    }).join("\n");
+  }
+
+  function withHeader(tableFn) {
+    var rows = tableFn(netlist);
+    return $("withHeader").checked ? rows : rows.slice(1);
+  }
+
+  $("copyLayout").addEventListener("click", function () {
+    if (!netlist) return;
+    copyText(rowsToTSV(withHeader(PADS.layoutPartsTable)), "Layout parts");
+  });
+  $("copySchem").addEventListener("click", function () {
+    if (!netlist) return;
+    copyText(rowsToTSV(withHeader(PADS.schematicPartsTable)), "Schematic parts");
+  });
+  $("copyBom").addEventListener("click", function () {
+    if (!netlist) return;
+    copyText(rowsToTSV(withHeader(PADS.bomSummaryTable)), "BOM check");
+  });
+  $("csvParts").addEventListener("click", function () {
+    if (!netlist) return;
+    download(baseName + "_parts.csv", PADS.toLayoutPartsCSV(netlist), "text/csv");
+  });
+  $("csvNets").addEventListener("click", function () {
+    if (!netlist) return;
+    download(baseName + "_nets.csv", PADS.toNetsCSV(netlist), "text/csv");
+  });
+  $("dlJson").addEventListener("click", function () {
+    if (!netlist) return;
+    download(baseName + "_netlist.json", JSON.stringify(netlist, null, 2), "application/json");
+  });
+})();
+</script>
+</body>
+</html>
