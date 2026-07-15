@@ -155,6 +155,49 @@ check("layout_basic.asc signals + pins", function () {
   );
 });
 
+console.log("\nLayout wrapped lines + diagnostics:");
+check("part items wrapped across lines (PADS ~76-char output width)", function () {
+  var data = [
+    "!PADS-POWERPCB-V9.5-MILS! DESIGN DATABASE ASCII FILE 1.0",
+    "*PART*       ITEMS",
+    // wrapped between coordinates:
+    "U100             TPS54331DR_LONG_TYPE_NAME@SOIC127P600X170-8N     13741.42",
+    "                 14947.44  270  N M 0 -1 0 -1 0",
+    // wrapped right after rotation, flags on their own line:
+    "C55              CAP_VERY_LONG_TYPE_NAME_100NF_X7R_16V@CAPC1005X55N 1200 3400 90",
+    "N M 0 -1 0 -1 0",
+    // normal single-line item:
+    "R9               RES10K@RES0603 100 200 0 N N 0 -1 0 -1 0",
+    "*END*",
+  ].join("\n");
+  var nl = new PADS.PADSParser().parseSync(data);
+  assert(nl.parts.length === 3, "expected 3 parts, got " + nl.parts.length);
+  var u100 = nl.parts.filter(function (p) { return p.refdes === "U100"; })[0];
+  assert(u100.x === 13741.42 && u100.y === 14947.44, "U100 joined coordinates");
+  assert(u100.side === "Bottom", "U100 mirrored flag from joined line");
+  var c55 = nl.parts.filter(function (p) { return p.refdes === "C55"; })[0];
+  assert(c55.side === "Bottom", "C55 side from flags continuation line, got " + c55.side);
+  var r9 = nl.parts.filter(function (p) { return p.refdes === "R9"; })[0];
+  assert(r9.side === "Top", "R9 stays Top");
+});
+check("missing *PART* section -> actionable warning", function () {
+  var nl = new PADS.PADSParser().parseSync(
+    "!PADS-POWERPCB-V9.5-MILS!\n*ROUTE*\n*SIGNAL* GND\nC1.2 C2.2\n*END*\n"
+  );
+  assert(nl.warnings.length === 1, "one warning expected");
+  assert(/Parts' section is selected/.test(nl.warnings[0].message), "mentions export option");
+});
+check("unrecognized part lines -> warning quotes the line", function () {
+  var nl = new PADS.PADSParser().parseSync(
+    "!PADS-POWERPCB-V9.5-MILS!\n*PART*\nSOMETHING WEIRD FORMAT 123\n*END*\n"
+  );
+  assert(nl.parts.length === 0, "no parts");
+  assert(
+    /First unrecognized entry \(line 3\): "SOMETHING WEIRD FORMAT 123"/.test(nl.warnings[0].message),
+    "warning should quote the offending line, got: " + nl.warnings[0].message
+  );
+});
+
 console.log("\nExport helpers:");
 check("toLayoutPartsTSV shape + natural sort", function () {
   var nl = parseFile(path.join(__dirname, "examples", "layout_basic.asc"));
