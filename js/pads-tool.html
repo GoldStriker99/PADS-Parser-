@@ -881,13 +881,30 @@ Runs entirely in your browser — no install, no network, nothing leaves this pa
   // still get a footprint. Gate/pin sublines never match (their second
   // token is numeric or they start with a digit or quote).
   PADSParser.prototype._parttypeLine = function (line) {
-    var m = /^([^\s"]+)\s+([^\s"]+)/.exec(line);
-    if (!m) return;
-    // Type names may start with a digit (e.g. "0402CS"), but neither field
-    // is ever purely numeric on an item line — that filters gate/pin rows.
-    if (/^-?[\d.]+$/.test(m[1]) || /^-?[\d.]+$/.test(m[2])) return;
-    if (this._ptypeDecals[m[1]] === undefined) {
-      this._ptypeDecals[m[1]] = m[2].split(":")[0];
+    var tokens = line.split(/\s+/);
+    if (tokens.length < 2) return;
+    var name = tokens[0];
+    var decal = tokens[1];
+    if (name.charAt(0) === '"' || decal.charAt(0) === '"') return;
+    // Type names may start with a digit (e.g. "0402CS") but are never
+    // purely numeric — that filters pin/coordinate rows.
+    if (/^-?[\d.]+$/.test(name)) return;
+    // Decals CAN be purely numeric (chip sizes: "0603", "0805", "1812").
+    // What distinguishes a real item row from gate rows like "G 1 2" or
+    // "GATE 1 48 0" is that item rows carry a family name and flag letters
+    // after the decal, while gate rows are numeric all the way.
+    if (/^-?[\d.]+$/.test(decal)) {
+      var allNumeric = true;
+      for (var i = 2; i < tokens.length; i++) {
+        if (!/^-?[\d.]+$/.test(tokens[i])) {
+          allNumeric = false;
+          break;
+        }
+      }
+      if (allNumeric) return;
+    }
+    if (this._ptypeDecals[name] === undefined) {
+      this._ptypeDecals[name] = decal.split(":")[0];
     }
   };
 

@@ -235,6 +235,29 @@ check("unrecognized part lines -> warning quotes the line", function () {
   );
 });
 
+check("numeric decal names (0603 etc.) resolve from *PARTTYPE*", function () {
+  var data = [
+    "!PADS-POWERPCB-V10.0-MILS-250L! DESIGN DATABASE ASCII FILE 1.0",
+    "*PARTTYPE*   ITEMS",
+    "",
+    "CAP0603_100NF    0603 UND 1 0 0 A",
+    "G 1 2",
+    "GATE 1 48 0",
+    "KEM-CAP          KEMET-1812-B UND 1 0 0 A",
+    "*PART*       ITEMS",
+    "",
+    "C1              CAP0603_100NF 100 200 0.000 U N 0 -1 0 -1 0",
+    "C2              KEM-CAP 300 400 0.000 U N 0 -1 0 -1 0",
+    "*END*",
+  ].join("\n");
+  var nl = new PADS.PADSParser().parseSync(data);
+  var c1 = nl.parts.filter(function (p) { return p.refdes === "C1"; })[0];
+  var c2 = nl.parts.filter(function (p) { return p.refdes === "C2"; })[0];
+  assert(c1.decal === "0603", "C1 numeric decal from PARTTYPE, got '" + c1.decal + "'");
+  assert(c2.decal === "KEMET-1812-B", "C2 decal, got '" + c2.decal + "'");
+  assert(nl.parts.length === 2, "gate rows must not become part types");
+});
+
 console.log("\nPADS Logic schematic format:");
 var LOGIC_SAMPLE = [
   "*PADS-LOGIC-V9.0* DESIGN EXPORT FILE FROM PADS LOGIC VVX.2.15",
